@@ -18,7 +18,7 @@ class NetWatch:
             print(f'[+] Events before cutting: {len(net_activity_org)}. Events after cutting: {len(net_activity_uniq)}')
             for a in net_activity_uniq:
                 proc = self.pid_to_process(a.pid)
-                print(f'    - {a.pid} : {proc.info["name"]}')
+                print(f'    - PID: {a.pid} | Executable: {proc.info["name"]} | Connection Status: {a.status}')
             sleep(self.cooldown)
 
     def check_beacon(self):
