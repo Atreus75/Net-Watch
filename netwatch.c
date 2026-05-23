@@ -124,11 +124,12 @@ VOID WINAPI Callback(PEVENT_RECORD record){
     FileTimeToSystemTime(&filetime, &systemtime);
 
     // Output event information
-    printf("[+] New Event at %hu/%hu/%hu at %hu:%hu | PID: %lu\n", systemtime.wDay, systemtime.wMonth, systemtime.wYear, systemtime.wHour, systemtime.wMinute, event.PID);
     PWSTR eventName = (PWSTR)((PBYTE)event_metadata + event_metadata->OpcodeNameOffset);
-    wprintf(L"   * Event Type: %ls\n", eventName);
-    wprintf(L"   * Source Address: %s:%hu\n", event.source_ip, event.source_port);
-    wprintf(L"   * Destination Address: %s:%hu\n", event.dest_ip, event.dest_port);
+
+    wprintf(L"\n[%hu/%hu/%hu][%hu:%hu:%hu] %ls\n", systemtime.wDay, systemtime.wMonth, systemtime.wYear, systemtime.wHour, systemtime.wMinute, systemtime.wSecond, eventName);
+    wprintf(L"    PID: %lu\n", event.PID);
+    wprintf(L"    Source Address: %s:%hu\n", event.source_ip, event.source_port);
+    wprintf(L"    Destination Address: %s:%hu\n", event.dest_ip, event.dest_port);
 }
 
 int main(){
