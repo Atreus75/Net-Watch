@@ -1,0 +1,9 @@
+{
+    "Suspicious" : [
+        "powershell.exe",
+        "cmd.exe",
+        "cerutil.exe",
+        "nmap.exe",
+        "ncat.exe"
+    ]
+}
