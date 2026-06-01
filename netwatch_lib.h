@@ -12,7 +12,7 @@ typedef struct {
 } Timestamp;
 typedef struct {
     int PID;
-    char image[50];
+    char image[260];
     short int type; // 1 for Connection, 0 for Disconnection
     IPv4 source_ip;
     unsigned short source_port;
