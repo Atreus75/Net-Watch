@@ -5,22 +5,81 @@
 #include <evntrace.h>
 #include <evntcons.h>
 #include <tdh.h>
+#include <psapi.h>
 #include <stdio.h>
+#include "cJSON.h"
 
 TRACEHANDLE sessionHandle = 0;// Trace session handler
 TRACEHANDLE traceHandle = 0; 
 int EVENT_COUNTER = 0;
 NetEvent * EventCache = NULL;
 
-/* TO-DO:
-    * 1 - Capturar nome do executável envolvido no evento pelo PID
-    * 2 - Implementar 1° check de maliciosidade: verificar se o image do executável se encontra dentre os categorizados como suspeitos em um programs.json simples.
-*/
+int suspiciousEventImage(NetEvent * event){
+    FILE * f = fopen("programs.json", "rb");
+    if (!f){
+        printf("[-] Error opening \"programs.json\"\n");
+        return 1;
+    }
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char * data = malloc(len + 1);
+    fread(data, 1, len, f);
+    data[len] = '\0';
+    fclose(f);
+
+    // JSON Parsing
+    cJSON *json = cJSON_Parse(data);
+    free(data);
+    if (!json){
+        printf("[-] Error in JSON parsing.\n");
+        return 1;
+    }
+
+    // Accessing "Suspicious" array
+    cJSON * suspicious = cJSON_GetObjectItem(json, "Suspicious");
+    if (cJSON_IsArray(suspicious)){
+        int count = cJSON_GetArraySize(suspicious);
+        for (cJSON * item = suspicious->child; item; item = item->next){
+            if (cJSON_IsString(item)){
+                char * sus_image = item->valuestring;
+                if (strcmp(event->image, sus_image) == 0) return 1;
+            }
+        }
+    }
+    cJSON_Delete(json);
+    return 0;
+}
+
+void getImageFromPath(NetEvent * event){
+    if (strlen(event->image) == 0) return;
+    int path_size = strlen(event->image), i = 0;
+    char reverted[path_size];
+    ZeroMemory(reverted, path_size);
+    for (int c = path_size-1; c >= 0; c--) reverted[i++] = event->image[c];
+    ZeroMemory(event->image, 260);
+    
+    int first_occurrence = strcspn(reverted, "\\");
+    char rev_image[first_occurrence];
+    ZeroMemory(rev_image, first_occurrence);
+    i = 0;
+    for (int c = 0; c <= first_occurrence; c++) rev_image[i++] = reverted[c];
+    
+    char image[first_occurrence];
+    ZeroMemory(image, first_occurrence+1);
+    i = 0;
+    for (int c = first_occurrence-1; c >= 0; c--) image[i++] = rev_image[c];
+    strcpy(event->image, image);
+}
+
 void printEvent(NetEvent event){
+    if (!suspiciousEventImage(&event)) return;
     wprintf(L"\n[%hu:%hu:%hu] ", event.moment.hour, event.moment.minute, event.moment.second);
     if (event.type == CONNECTION_EVENT) wprintf(L"Connection\n");
     else wprintf(L"Disconnection\n");
+    wprintf(L"[+] SUSPICIOUS ACTIVITY DETECTED\n");
     wprintf(L"    PID: %lu\n", event.PID);
+    wprintf(L"    Executable: %s\n", event.image);
     wprintf(L"    Source Address: %s:%hu\n", event.source_ip, event.source_port);
     wprintf(L"    Destination Address: %s:%hu\n", event.dest_ip, event.dest_port);
 }
@@ -124,6 +183,19 @@ NetEvent fillEventStruct(PTRACE_EVENT_INFO event_metadata, PEVENT_RECORD record)
     PWSTR eventName = (PWSTR)((PBYTE)event_metadata + event_metadata->OpcodeNameOffset);
     if (wcscmp(eventName, L"ConnectIPV4") == 0) event.type = CONNECTION_EVENT;
     else event.type = DISCONNECTION_EVENT;
+
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, (DWORD)event.PID);
+    DWORD status = GetProcessImageFileNameA(
+        hProcess,
+        (LPSTR)event.image,
+        (DWORD)MAX_PATH
+    );
+    CloseHandle(hProcess);
+    if (!status) {
+        //wprintf(L"[-] ERROR: %lu, image file name no retrieved\n", GetLastError());
+        ZeroMemory(event.image, 50);
+    }
+    getImageFromPath(&event);
 
     return event;
 }
