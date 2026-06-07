@@ -9,10 +9,22 @@
 #include <stdio.h>
 #include "cJSON.h"
 
+PWSTR SupportedEvents[MAX_EVENTS] = {
+    (PWSTR)L"DisconnectIPV4",
+    (PWSTR)L"ConnectIPV4",
+    (PWSTR)L"AcceptIPV4"
+};
+
 TRACEHANDLE sessionHandle = 0;// Trace session handler
 TRACEHANDLE traceHandle = 0; 
 int EVENT_COUNTER = 0;
 NetEvent * EventCache = NULL;
+
+
+/* TO-DO:
+    * 1 - Capturar nome do executável envolvido no evento pelo PID
+    * 2 - Implementar 1° check de maliciosidade: verificar se o image do executável se encontra dentre os categorizados como suspeitos em um programs.json simples.
+*/
 
 int suspiciousEventImage(NetEvent * event){
     FILE * f = fopen("programs.json", "rb");
@@ -39,7 +51,6 @@ int suspiciousEventImage(NetEvent * event){
     // Accessing "Suspicious" array
     cJSON * suspicious = cJSON_GetObjectItem(json, "Suspicious");
     if (cJSON_IsArray(suspicious)){
-        int count = cJSON_GetArraySize(suspicious);
         for (cJSON * item = suspicious->child; item; item = item->next){
             if (cJSON_IsString(item)){
                 char * sus_image = item->valuestring;
@@ -48,6 +59,11 @@ int suspiciousEventImage(NetEvent * event){
         }
     }
     cJSON_Delete(json);
+    return 0;
+}
+
+int isEventSupported(PTRACE_EVENT_INFO event_metadata){
+    for (int c = 0; c<MAX_EVENTS; c++) if (wcscmp(SupportedEvents[c], (PWSTR)((PBYTE)event_metadata + event_metadata->OpcodeNameOffset)) == 0) return 1;
     return 0;
 }
 
@@ -75,7 +91,8 @@ void getImageFromPath(NetEvent * event){
 void printEvent(NetEvent event){
     if (!suspiciousEventImage(&event)) return;
     wprintf(L"\n[%hu:%hu:%hu] ", event.moment.hour, event.moment.minute, event.moment.second);
-    if (event.type == CONNECTION_EVENT) wprintf(L"Connection\n");
+    if (event.type == OUTGOING_CONNECTION_EVENT) wprintf(L"Outgoing Connection\n");
+    else if (event.type == INCOMMING_CONNECTION_EVENT) wprintf(L"Incomming Connection\n");
     else wprintf(L"Disconnection\n");
     wprintf(L"[+] SUSPICIOUS ACTIVITY DETECTED\n");
     wprintf(L"    PID: %lu\n", event.PID);
@@ -106,7 +123,7 @@ PTRACE_EVENT_INFO getEventMetadata(PEVENT_RECORD record){
         free(event_metadata);
         perror("[-] Error: ");
         return NULL;
-    }
+    }else if (!isEventSupported(event_metadata)) return NULL;
     return event_metadata;
 }
 
@@ -131,7 +148,7 @@ NetEvent fillEventStruct(PTRACE_EVENT_INFO event_metadata, PEVENT_RECORD record)
             &property_size
         );
         BYTE * buffer = (BYTE*)malloc(property_size);
-        ULONG status = TdhGetProperty( // Loads the event data inside the buffer
+        TdhGetProperty( // Loads the event data inside the buffer
             record,
             0,
             NULL,
@@ -141,25 +158,40 @@ NetEvent fillEventStruct(PTRACE_EVENT_INFO event_metadata, PEVENT_RECORD record)
             buffer
         );
 
-        // Filling the NetEvent struct for better readability
+        // Filling the NetEvent struct for better readability and threatment
+        PWSTR eventName = (PWSTR)((PBYTE)event_metadata + event_metadata->OpcodeNameOffset);
+        if (wcscmp(eventName, SupportedEvents[1]) == 0) event.type = OUTGOING_CONNECTION_EVENT;
+        else if (wcscmp(eventName, SupportedEvents[2]) == 0) event.type = INCOMMING_CONNECTION_EVENT;
+        else event.type = DISCONNECTION_EVENT;
+
         USHORT inType = property_info->nonStructType.InType;
-        USHORT outType = property_info->nonStructType.OutType;
         switch (inType)
         {
         case 8: //UINT32
             if (wcscmp(L"daddr", property_name) == 0){// IPv4
                 DWORD ip = *(DWORD*)buffer;
                 BYTE * b = (BYTE*)&ip;
-                sprintf(event.dest_ip, "%u.%u.%u.%u\0", b[0], b[1], b[2], b[3]);
+                if (event.type == OUTGOING_CONNECTION_EVENT || event.type == DISCONNECTION_EVENT){
+                    sprintf(event.dest_ip, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+                }else sprintf(event.source_ip, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
             }else if (wcscmp(L"saddr", property_name) == 0){
                 DWORD ip = *(DWORD*)buffer;
                 BYTE * b = (BYTE*)&ip;
-                sprintf(event.source_ip, "%u.%u.%u.%u\0", b[0], b[1], b[2], b[3]);
+                if (event.type == OUTGOING_CONNECTION_EVENT || event.type == DISCONNECTION_EVENT){
+                    sprintf(event.source_ip, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+                }else sprintf(event.dest_ip, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
             }else if (wcscmp(L"PID", property_name) == 0) event.PID = *(DWORD*)buffer;
             break;
         case 6: //UINT16
-            if (wcscmp(L"sport", property_name) == 0) event.source_port = ntohs(*(USHORT*)buffer);
-            else if (wcscmp(L"dport", property_name) == 0) event.dest_port = ntohs(*(USHORT*)buffer);
+            if (wcscmp(L"sport", property_name) == 0){
+                if (event.type == OUTGOING_CONNECTION_EVENT || event.type == DISCONNECTION_EVENT){
+                    event.source_port = ntohs(*(USHORT*)buffer);
+                }else event.dest_port = ntohs(*(USHORT*)buffer);
+            }else if (wcscmp(L"dport", property_name) == 0){
+                if (event.type == OUTGOING_CONNECTION_EVENT || event.type == DISCONNECTION_EVENT){
+                    event.dest_port = ntohs(*(USHORT*)buffer);
+                }else event.source_port = ntohs(*(USHORT*)buffer);
+            }
             break;
         default:
             break;
@@ -180,9 +212,7 @@ NetEvent fillEventStruct(PTRACE_EVENT_INFO event_metadata, PEVENT_RECORD record)
     event.moment.minute = (unsigned short)systemtime.wMinute;
     event.moment.second = (unsigned short)systemtime.wSecond;
     
-    PWSTR eventName = (PWSTR)((PBYTE)event_metadata + event_metadata->OpcodeNameOffset);
-    if (wcscmp(eventName, L"ConnectIPV4") == 0) event.type = CONNECTION_EVENT;
-    else event.type = DISCONNECTION_EVENT;
+    
 
     HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, (DWORD)event.PID);
     DWORD status = GetProcessImageFileNameA(
@@ -202,10 +232,6 @@ NetEvent fillEventStruct(PTRACE_EVENT_INFO event_metadata, PEVENT_RECORD record)
 
 // Callback function called by ETW at each event from provider
 VOID WINAPI Callback(PEVENT_RECORD record){
-    UCHAR event_opcode = record->EventHeader.EventDescriptor.Opcode; // Similar to an event ID
-    // Checks if the event Opcode is supported
-    if (!isOpcodeSupported(event_opcode)) return;
-
     // Gets metadata in order to get the actual event data
     PTRACE_EVENT_INFO event_metadata = getEventMetadata(record);
     if (!event_metadata) return;
