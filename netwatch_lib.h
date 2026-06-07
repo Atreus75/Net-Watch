@@ -1,5 +1,6 @@
-#define MAX_EVENTS 2
-#define CONNECTION_EVENT 1
+#define MAX_EVENTS 3
+#define INCOMMING_CONNECTION_EVENT 2
+#define OUTGOING_CONNECTION_EVENT 1
 #define DISCONNECTION_EVENT 0
 #define IRRELEVANT_EVENT -1
 #include <string.h>
@@ -20,16 +21,6 @@ typedef struct {
     unsigned short dest_port;
     Timestamp moment;
 } NetEvent;
-
-int SupportedEvents[MAX_EVENTS] = {
-    12,
-    13
-};
-
-int isOpcodeSupported(unsigned char opcode){
-    for (int c = 0; c<MAX_EVENTS; c++) if (SupportedEvents[c] == opcode) return 1;
-    return 0;
-}
 
 int sameConnection(NetEvent * evt1, NetEvent * evt2){
     if (evt1->PID == evt2->PID){
