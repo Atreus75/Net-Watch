@@ -18,11 +18,11 @@ wget https://raw.githubusercontent.com/DaveGamble/cJSON/master/cJSON.h
 #### Compiling
 **GCC MinGW**: 
 ```
-gcc -O2 win_event_collect.c cJSON.c -o netwatch -ladvapi32 -ltdh -lws2_32
+gcc -O2 netwatch.c cJSON.c -o netwatch -ladvapi32 -ltdh -lws2_32
 ```
 **MSVC**:
 ```
-cl win_event_collect.c cJSON.c /Fe:netwatch.exe /link advapi32.lib tdh.lib ws2_32.lib
+cl netwatch.c cJSON.c /Fe:netwatch.exe /link advapi32.lib tdh.lib ws2_32.lib
 ```
 #### Running
 `.\netwatch.exe`
