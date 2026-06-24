@@ -330,7 +330,7 @@ int isKnownSysProcess(NetEvent * event){
 		"System",
 		NULL
 	};
-	for (int c = 0; c < 7; c++){
+	for (int c = 0; system_processes[c] != NULL; c++){
 		if (strcmp(event->image, system_processes[c]) == 0) return 1;
 	}
 	return 0;
