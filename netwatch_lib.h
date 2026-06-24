@@ -3,13 +3,18 @@
 #define OUTGOING_CONNECTION_EVENT 1
 #define DISCONNECTION_EVENT 0
 #define IRRELEVANT_EVENT -1
+#define CACHE_HEAD 3
 #include <string.h>
 #include <signal.h>
-#include "cJSON.h"
+#include <time.h>
+#include "cJSON/cJSON.h"
 
 // Types and structs
 typedef char IPv4[20];
 typedef struct {
+    unsigned short year;
+    unsigned short month;
+    unsigned short day;
     unsigned short hour;
     unsigned short minute;
     unsigned short second;
@@ -17,7 +22,7 @@ typedef struct {
 typedef struct netevent{
     int PID;
     char image[260];
-    short int type; // 1 for Connection, 0 for Disconnection
+    short int type;
     IPv4 source_ip;
     unsigned short source_port;
     IPv4 dest_ip;
@@ -25,26 +30,35 @@ typedef struct netevent{
     Timestamp moment;
     struct netevent * next;
 } NetEvent;
-typedef NetEvent* NetEventCache; // A NetEvent queue (first-in first-out data structure) implemented with singly linked list
+typedef NetEvent* NetEventQueue; // A NetEvent queue (first-in first-out data structure) implemented with singly linked list
 
 // Event queue management functions
-void insertEvent(NetEvent event, NetEventCache queue);
-void removeEvent(NetEventCache queue);// Always removes the first/older element of the Queue
-void freeQueue(NetEventCache queue);// Free all nodes of the queue recursively
-int saveEvent(NetEvent event, NetEventCache queue);
+void qInsertEvent(NetEvent event, NetEventQueue q);
+void qRemoveEvent(NetEventQueue qe);// Always removes the first/older element of the Queue
+void qFree(NetEventQueue q);// Free all nodes of the queue recursively
+void qPrintQueue(NetEventQueue q);
+void qPrintQueueSuspicious(NetEventQueue q);
+int qSaveEvent(NetEvent event, NetEventQueue q);
+int inQueue(NetEvent * event, NetEventQueue q, int (*comparison_func)(NetEvent * evt1, NetEvent * evt2)); //Takes an event pointer, a queue and a choice-free NetEvent comparison function
+
 
 // Event treatment functions
 int sameConnection(NetEvent * evt1, NetEvent * evt2);
+int sameImage(NetEvent * evt1, NetEvent * evt2);
+int sameHosts(NetEvent * evt1, NetEvent * evt2);
+int sameProcess(NetEvent * evt1, NetEvent * evt2);
 int suspiciousEventImage(NetEvent * event);
 int suspiciousEvent(NetEvent * event);
+int isConnectionEvent(NetEvent * event);
+int isKnownSysProcess(NetEvent * event);
+int isBeaconing(NetEvent * event, NetEventQueue q);
 void getImageFromPath(NetEvent * event);
 void printEvent(NetEvent event);
 
+
 // Others
 void terminate(int sig);
-
-// Idea: make several comparison functions and then pass the comparing function as an argument of this function below
-int inCache(NetEvent * event, NetEventCache queue);
+time_t timestampToSeconds(Timestamp timestamp);
 
 //Windows includes and functions
 #if defined(_WIN32)
