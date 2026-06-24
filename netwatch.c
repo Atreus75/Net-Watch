@@ -164,9 +164,11 @@ VOID WINAPI Callback(PEVENT_RECORD record){
     
     // Output event information
     qSaveEvent(event, Cache);
-	if (!suspiciousEvent(&event)) return;
-	//wprintf(L"[+] DEBUG: CACHE CURRENT STATE: ");	
-	//qPrintQueueSuspicious(Cache);
+	int beaconing_interval = 0, suspicious_image = 0;
+	if (!suspiciousEvent(&event, &beaconing_interval, &suspicious_image)) return;
+    wprintf(L"\n[%hu:%hu:%hu] SUSPICIOUS NETWORK ACTIVITY\n", event.moment.hour, event.moment.minute, event.moment.second);
+	if (beaconing_interval) wprintf(L"+ Beaconing compatible behavior.\n+	Average beacon interval: %d\n", beaconing_interval);
+	if (suspicious_image) wprintf(L"+ Suspicious executable image\n");
     printEvent(event);
 }
 
@@ -305,16 +307,6 @@ void qPrintQueue(NetEventQueue q){
 	qPrintQueue(q->next);
 }
 
-void qPrintQueueSuspicious(NetEventQueue q){
-	if (q == NULL){
-		wprintf(L"\n");
-		return;
-	}else if (q->type == CACHE_HEAD || suspiciousEvent(q)){
-		wprintf(L"[%s]->", q->image);
-	}
-	qPrintQueueSuspicious(q->next);
-}
-
 int isConnectionEvent(NetEvent *event){
 	return (event->type == INCOMMING_CONNECTION_EVENT || event->type == OUTGOING_CONNECTION_EVENT);
 }
@@ -356,17 +348,20 @@ int isBeaconing(NetEvent * event, NetEventQueue q){// Returns 1 if beaconing beh
 		pre = aux1;
         aux1 = aux1->next;
     }
-   	if (pairs >= 5 ){
+   	if (pairs >= 4 ){
 		int media = sum/pairs;
 		time_t event_t = timestampToSeconds(event->moment);
 		time_t last_interval = event_t - aux1_t;
-		if (last_interval >= media-1 && last_interval <= media+1) beaconing = 1;
+		if (last_interval >= media-5 && last_interval <= media+5) beaconing = 1;
 	}
 	return beaconing;
 }
 
-int suspiciousEvent(NetEvent * event){
-    return suspiciousEventImage(event) || isBeaconing(event, Cache);
+int suspiciousEvent(NetEvent * event, int * beaconing_interval, int * suspicious_image){
+    int suspicious = 0;
+	if ((*beaconing_interval = isBeaconing(event, Cache))) suspicious = 1;
+	if ((*suspicious_image = suspiciousEventImage(event))) suspicious = 1;
+	return suspicious;
 }
 
 int sameConnection(NetEvent * evt1, NetEvent * evt2){
@@ -416,11 +411,10 @@ void getImageFromPath(NetEvent * event){
 
 void printEvent(NetEvent event){
     #if defined(_WIN32)
-    wprintf(L"\n[%hu:%hu:%hu] ", event.moment.hour, event.moment.minute, event.moment.second);
+    wprintf(L"* CONNECTION INFORMATION\n    Type: ");
     if (event.type == OUTGOING_CONNECTION_EVENT) wprintf(L"Outgoing Connection\n");
     else if (event.type == INCOMMING_CONNECTION_EVENT) wprintf(L"Incomming Connection\n");
     else wprintf(L"Disconnection\n");
-    wprintf(L"[+] SUSPICIOUS ACTIVITY DETECTED\n");
     wprintf(L"    PID: %lu\n", event.PID);
     wprintf(L"    Executable: %s\n", event.image);
     wprintf(L"    Source Address: %s:%hu\n", event.source_ip, event.source_port);
