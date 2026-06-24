@@ -167,7 +167,7 @@ VOID WINAPI Callback(PEVENT_RECORD record){
 	int beaconing_interval = 0, suspicious_image = 0;
 	if (!suspiciousEvent(&event, &beaconing_interval, &suspicious_image)) return;
     wprintf(L"\n[%hu:%hu:%hu] SUSPICIOUS NETWORK ACTIVITY\n", event.moment.hour, event.moment.minute, event.moment.second);
-	if (beaconing_interval) wprintf(L"+ Beaconing compatible behavior.\n+	Average beacon interval: %d\n", beaconing_interval);
+	if (beaconing_interval) wprintf(L"+ Beaconing compatible behavior.\n+	Average beacon interval: %ds\n", beaconing_interval);
 	if (suspicious_image) wprintf(L"+ Suspicious executable image\n");
     printEvent(event);
 }
