@@ -8,9 +8,9 @@
 #include <stdio.h>
 
 // Global variables and macros
-#define MAX_CACHE_SIZE 10
+#define MAX_CACHE_SIZE 200
 int EVENT_COUNTER = 0;
-NetEventCache Cache = NULL; //Global event cache for event history storing
+NetEventQueue Cache = NULL; //Global event cache for event history storing
 
 // Windows functions
 #if defined(_WIN32)
@@ -126,10 +126,13 @@ NetEvent fillEventStruct(PTRACE_EVENT_INFO event_metadata, PEVENT_RECORD record)
     FileTimeToLocalFileTime((FILETIME *)(&record->EventHeader.TimeStamp), &filetime);
     SYSTEMTIME systemtime;
     FileTimeToSystemTime(&filetime, &systemtime);
+    event.moment.year = (unsigned short)systemtime.wYear;
+    event.moment.month = (unsigned short)systemtime.wMonth;
+    event.moment.day = (unsigned short)systemtime.wDay;
     event.moment.hour = (unsigned short)systemtime.wHour;
     event.moment.minute = (unsigned short)systemtime.wMinute;
     event.moment.second = (unsigned short)systemtime.wSecond;
-    
+     
     
 
     HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, (DWORD)event.PID);
@@ -150,7 +153,7 @@ NetEvent fillEventStruct(PTRACE_EVENT_INFO event_metadata, PEVENT_RECORD record)
 
 // Windows callback function called by ETW at each event from provider
 VOID WINAPI Callback(PEVENT_RECORD record){
-    signal(SIGINT, terminate);
+	signal(SIGINT, terminate);
     // Gets metadata in order to get the actual event data
     PTRACE_EVENT_INFO event_metadata = getEventMetadata(record);
     if (!event_metadata) return;
@@ -160,9 +163,11 @@ VOID WINAPI Callback(PEVENT_RECORD record){
     if (event.type == IRRELEVANT_EVENT) return;
     
     // Output event information
-    if (!suspiciousEvent(&event)) return;
+    qSaveEvent(event, Cache);
+	if (!suspiciousEvent(&event)) return;
+	//wprintf(L"[+] DEBUG: CACHE CURRENT STATE: ");	
+	//qPrintQueueSuspicious(Cache);
     printEvent(event);
-    saveEvent(event, Cache);
 }
 
 void StartETWTrace(){
@@ -204,36 +209,41 @@ char * SupportedEvents[MAX_EVENTS] = {
 }
 #endif 
 
-
-
-// Event Queue functions
-void insertEvent(NetEvent event, NetEventCache queue){
-    if (queue->next == NULL){
+// Event queue functions
+void qInsertEvent(NetEvent event, NetEventQueue q){
+    if (q->next == NULL){
         NetEvent * new = (NetEvent*)malloc(sizeof(NetEvent));
         *new = event;
         new->next = NULL;
-        queue->next = new;
-    }else insertEvent(event, queue->next);
+        q->next = new;
+    }else qInsertEvent(event, q->next);
 }
 
-void removeEvent(NetEventCache queue){// Always removes the first/older element of the Queue
-    if (queue->next == NULL) return ;
-    NetEvent * next = queue->next->next;
-    free(queue->next);
-    queue->next = next;
+void qRemoveEvent(NetEventQueue q){// Always removes the first/older element of the queue
+    if (q->next == NULL) return;
+    NetEvent * next = q->next->next;
+    free(q->next);
+    q->next = next;
+	EVENT_COUNTER--;
 }
 
-void freeQueue(NetEventCache queue){
-    if (queue == NULL) return;
-    freeQueue(queue->next);
-    free(queue);
+void qFree(NetEventQueue q){
+    if (q == NULL) return;
+    qFree(q->next);
+    free(q);
 }
 
-int saveEvent(NetEvent event, NetEventCache queue){
-    if (EVENT_COUNTER >= MAX_CACHE_SIZE) removeEvent(queue);
+int qSaveEvent(NetEvent event, NetEventQueue q){
+    if (EVENT_COUNTER >= MAX_CACHE_SIZE) qRemoveEvent(q);
     else EVENT_COUNTER++;
-    insertEvent(event, queue);
+    qInsertEvent(event, q);
     return 1;
+}
+
+int inQueue(NetEvent * event, NetEventQueue q, int (*comparison_func)(NetEvent * evt1, NetEvent * evt2)){
+    if (q == NULL) return 0;
+    if (comparison_func(event, q)) return 1;
+    return inQueue(event, q->next, comparison_func);
 }
 
 // Event treatment functions
@@ -273,20 +283,114 @@ int suspiciousEventImage(NetEvent * event){
     return 0;
 }
 
+NetEventQueue qInitializeQueue(){
+	NetEventQueue cache = (NetEvent *)malloc(sizeof(NetEvent));
+	strcpy(cache->image,"HEAD");
+	cache->next = NULL;
+	memset(cache->dest_ip, '\0', sizeof(IPv4));
+	memset(cache->source_ip, '\0', sizeof(IPv4));
+	cache->dest_port = 0;
+	cache->source_port = 0;
+	cache->PID = 0;
+	cache->type = CACHE_HEAD;
+	return cache;
+}
+
+void qPrintQueue(NetEventQueue q){
+	if (q == NULL){
+		wprintf(L"\n");
+		return;
+	}
+	wprintf(L"[%s]->", q->image);
+	qPrintQueue(q->next);
+}
+
+void qPrintQueueSuspicious(NetEventQueue q){
+	if (q == NULL){
+		wprintf(L"\n");
+		return;
+	}else if (q->type == CACHE_HEAD || suspiciousEvent(q)){
+		wprintf(L"[%s]->", q->image);
+	}
+	qPrintQueueSuspicious(q->next);
+}
+
+int isConnectionEvent(NetEvent *event){
+	return (event->type == INCOMMING_CONNECTION_EVENT || event->type == OUTGOING_CONNECTION_EVENT);
+}
+
+int isKnownSysProcess(NetEvent * event){
+	char * system_processes[8] = {
+		"svchost.exe",
+		"msedge.exe",
+		"firefox.exe",
+		"chrome.exe",
+		"lsass.exe",
+		"services.exe",
+		"System",
+		NULL
+	};
+	for (int c = 0; c < 7; c++){
+		if (strcmp(event->image, system_processes[c]) == 0) return 1;
+	}
+	return 0;
+}
+
+int isBeaconing(NetEvent * event, NetEventQueue q){// Returns 1 if beaconing behavior is detected
+	if (event->type != OUTGOING_CONNECTION_EVENT || isKnownSysProcess(event) ) return 0;
+
+	int pairs = 0, beaconing = 0;
+    float sum = 0;
+	time_t aux1_t = 0, pre_t = 0;
+	NetEvent * aux1 = q, * pre = NULL;
+		
+    while (aux1 != NULL){
+		if (sameConnection(event, aux1) && (sameImage(event, aux1) || sameProcess(event, aux1)) && aux1->type == OUTGOING_CONNECTION_EVENT){
+			if (pre != NULL){
+				aux1_t = timestampToSeconds(aux1->moment);
+				pre_t = timestampToSeconds(pre->moment);
+				sum += (aux1_t - pre_t);
+				pairs++;
+			}
+		}
+		pre = aux1;
+        aux1 = aux1->next;
+    }
+   	if (pairs >= 5 ){
+		int media = sum/pairs;
+		time_t event_t = timestampToSeconds(event->moment);
+		time_t last_interval = event_t - aux1_t;
+		if (last_interval >= media-1 && last_interval <= media+1) beaconing = 1;
+	}
+	return beaconing;
+}
+
 int suspiciousEvent(NetEvent * event){
-    return suspiciousEventImage(event);
+    return suspiciousEventImage(event) || isBeaconing(event, Cache);
 }
 
 int sameConnection(NetEvent * evt1, NetEvent * evt2){
-    if (evt1->PID == evt2->PID){
-        if (strcmp(evt1->source_ip, evt2->source_ip) == 0){
-            if (strcmp(evt1->dest_ip, evt2->dest_ip) == 0){
-                if (evt1->dest_port == evt2->dest_port) return 1;
-            }
+	if (!isConnectionEvent(evt1) || !isConnectionEvent(evt2)) return 0;
+    if (strcmp(evt1->source_ip, evt2->source_ip) == 0){
+        if (strcmp(evt1->dest_ip, evt2->dest_ip) == 0){
+            if (evt1->dest_port == evt2->dest_port) return 1;
         }
     }
     
+    
     return 0;
+}
+
+int sameProcess(NetEvent * evt1, NetEvent * evt2){
+	return evt1->PID == evt2->PID;
+}
+
+int sameImage(NetEvent * evt1, NetEvent * evt2){
+    return ((isConnectionEvent(evt1) && isConnectionEvent(evt2)) && strcmp(evt1->image, evt2->image) == 0);
+}
+
+int sameHosts(NetEvent * evt1, NetEvent * evt2){
+    return ((isConnectionEvent(evt1) && isConnectionEvent(evt2)) && strcmp(evt1->dest_ip, evt2->dest_ip) == 0);
 }
 
 void getImageFromPath(NetEvent * event){
@@ -337,12 +441,22 @@ void printEvent(NetEvent event){
 
 void terminate(int sig){
     printf("[-] CTRL+C detected.\n[-] Terminating.\n");
-    if (Cache) freeQueue(Cache);//free Cache if it's not empty
+    if (Cache) qFree(Cache);//free Cache queue if it's not empty
     exit(0);
+}
+time_t timestampToSeconds(Timestamp timestamp){
+    struct tm t = {0};
+    t.tm_year = timestamp.year;
+    t.tm_mon = timestamp.month;
+    t.tm_mday = timestamp.day;
+	t.tm_hour = timestamp.hour;
+	t.tm_sec = timestamp.second;
+	time_t seconds = mktime(&t);
+	return seconds;
 }
 
 int main(){
-    Cache = (NetEventCache)malloc(sizeof(NetEvent));
+    Cache =	qInitializeQueue();
     Cache->next = NULL;
     #if defined(_WIN32)
 
