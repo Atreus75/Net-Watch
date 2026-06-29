@@ -50,10 +50,10 @@ int sameProcess(NetEvent * evt1, NetEvent * evt2);
 int suspiciousEventImage(NetEvent * event);
 int isConnectionEvent(NetEvent * event);
 int isKnownSysProcess(NetEvent * event);
-int isBeaconing(NetEvent * event, NetEventQueue q);
+float isBeaconing(NetEvent * event, NetEventQueue q);
 void getImageFromPath(NetEvent * event);
 void printEvent(NetEvent event);
-int suspiciousEvent(NetEvent * event, int * beaconing_interval, int * suspicious_image);
+int suspiciousEvent(NetEvent * event, float * beaconing_interval, int * suspicious_image);
 
 // Others
 void terminate(int sig);
