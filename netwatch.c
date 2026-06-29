@@ -1,9 +1,3 @@
-/* TO-DO:
-    * 1 - Salvar eventos em um array de tamanho fixo (ou uma lista encadeada)
-    * 2 - Fazer funções de comparação entre funções (sameImage, sameConnection etc)
-    * 2 - Detectar beaconing utilizando a fila de eventos (Cache)
-*/
-
 #include "netwatch_lib.h"
 #include <stdio.h>
 
