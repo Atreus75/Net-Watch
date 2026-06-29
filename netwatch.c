@@ -163,11 +163,15 @@ VOID WINAPI Callback(PEVENT_RECORD record){
     if (event.type == IRRELEVANT_EVENT) return;
     
     // Output event information
+	float beaconing_interval = 0;
+	int suspicious_image = 0;
+	if (!suspiciousEvent(&event, &beaconing_interval, &suspicious_image)){
+    	qSaveEvent(event, Cache);
+		return;
+	}
     qSaveEvent(event, Cache);
-	int beaconing_interval = 0, suspicious_image = 0;
-	if (!suspiciousEvent(&event, &beaconing_interval, &suspicious_image)) return;
     wprintf(L"\n[%hu:%hu:%hu] SUSPICIOUS NETWORK ACTIVITY\n", event.moment.hour, event.moment.minute, event.moment.second);
-	if (beaconing_interval) wprintf(L"+ Beaconing compatible behavior.\n+	Average beacon interval: %ds\n", beaconing_interval);
+	if (beaconing_interval) wprintf(L"+ Beaconing compatible behavior.\n	Average beacon interval: %.2f seconds.\n", beaconing_interval);
 	if (suspicious_image) wprintf(L"+ Suspicious executable image\n");
     printEvent(event);
 }
@@ -328,10 +332,10 @@ int isKnownSysProcess(NetEvent * event){
 	return 0;
 }
 
-int isBeaconing(NetEvent * event, NetEventQueue q){// Returns 1 if beaconing behavior is detected
+float isBeaconing(NetEvent * event, NetEventQueue q){// Returns 1 if beaconing behavior is detected
 	if (event->type != OUTGOING_CONNECTION_EVENT || isKnownSysProcess(event) ) return 0;
 
-	int pairs = 0, beaconing = 0;
+	int pairs = 0;
     float sum = 0;
 	time_t aux1_t = 0, pre_t = 0;
 	NetEvent * aux1 = q, * pre = NULL;
@@ -344,20 +348,20 @@ int isBeaconing(NetEvent * event, NetEventQueue q){// Returns 1 if beaconing beh
 				sum += (aux1_t - pre_t);
 				pairs++;
 			}
+			pre = aux1;
 		}
-		pre = aux1;
         aux1 = aux1->next;
     }
    	if (pairs >= 4 ){
-		int media = sum/pairs;
+		float average_interval = sum/pairs;
 		time_t event_t = timestampToSeconds(event->moment);
 		time_t last_interval = event_t - aux1_t;
-		if (last_interval >= media-5 && last_interval <= media+5) beaconing = 1;
+		if (last_interval >= average_interval/2 && last_interval <= average_interval+average_interval/2) return average_interval;
 	}
-	return beaconing;
+	return 0;
 }
 
-int suspiciousEvent(NetEvent * event, int * beaconing_interval, int * suspicious_image){
+int suspiciousEvent(NetEvent * event, float * beaconing_interval, int * suspicious_image){
     int suspicious = 0;
 	if ((*beaconing_interval = isBeaconing(event, Cache))) suspicious = 1;
 	if ((*suspicious_image = suspiciousEventImage(event))) suspicious = 1;
@@ -365,7 +369,7 @@ int suspiciousEvent(NetEvent * event, int * beaconing_interval, int * suspicious
 }
 
 int sameConnection(NetEvent * evt1, NetEvent * evt2){
-	if (!isConnectionEvent(evt1) || !isConnectionEvent(evt2)) return 0;
+	if (!(isConnectionEvent(evt1) && isConnectionEvent(evt2)) ) return 0;
     if (strcmp(evt1->source_ip, evt2->source_ip) == 0){
         if (strcmp(evt1->dest_ip, evt2->dest_ip) == 0){
             if (evt1->dest_port == evt2->dest_port) return 1;
@@ -440,10 +444,11 @@ void terminate(int sig){
 }
 time_t timestampToSeconds(Timestamp timestamp){
     struct tm t = {0};
-    t.tm_year = timestamp.year;
+    t.tm_year = timestamp.year - 1900;
     t.tm_mon = timestamp.month;
     t.tm_mday = timestamp.day;
 	t.tm_hour = timestamp.hour;
+	t.tm_min = timestamp.minute;
 	t.tm_sec = timestamp.second;
 	time_t seconds = mktime(&t);
 	return seconds;
